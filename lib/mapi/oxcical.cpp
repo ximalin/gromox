@@ -3851,6 +3851,7 @@ static std::string oxcical_export_valarm(const MESSAGE_CONTENT &msg,
 }
 
 static std::string oxcical_export_internal(const char *method, const char *tzid,
+    ical_component *inherited_tz_component,
     const message_content &msg, const std::string &log_id_s, ical &pical,
     const std::string &org_name_s, cvt_id2user id2user, EXT_BUFFER_ALLOC alloc,
     GET_PROPIDS get_propids, const char *parent_uid = nullptr) try
@@ -4062,6 +4063,19 @@ static std::string oxcical_export_internal(const char *method, const char *tzid,
 				}
 			}
 		}
+	} else {
+		/*
+		 * Exceptions live in embedded messages that carry no timezone
+		 * properties of their own, so nothing above can recover one.
+		 * Without a VTIMEZONE to point at, RECURRENCE-ID and DTSTART
+		 * are emitted in UTC while the series states the same instants
+		 * as local time. A client then finds no EXDATE matching the
+		 * RECURRENCE-ID and shows the occurrence twice. The series has
+		 * already appended its VTIMEZONE to the same VCALENDAR, and
+		 * MS-OXOCAL keeps exceptions in the series' timezone, so use
+		 * it.
+		 */
+		ptz_component = inherited_tz_component;
 	}
 
 	auto snum = pmsg->proplist.get<const uint8_t>(PROP_TAG(PT_BOOLEAN, propids[l_subtype]));
@@ -4266,8 +4280,8 @@ static std::string oxcical_export_internal(const char *method, const char *tzid,
 			if (!pembedded->proplist.has(proptag_xrt))
 				continue;
 			auto estr = oxcical_export_internal(method, tzid,
-			            *pembedded, log_id, pical, org_name,
-			            id2user, alloc, get_propids, uid_val);
+			            ptz_component, *pembedded, log_id, pical,
+			            org_name, id2user, alloc, get_propids, uid_val);
 			if (estr.size() > 0)
 				return estr;
 		}
@@ -4282,8 +4296,8 @@ static std::string oxcical_export_internal(const char *method, const char *tzid,
 
 bool oxcical_converter::mapi_to_ical(const message_content &msg, ical &pical)
 {
-	auto err = oxcical_export_internal(nullptr, nullptr, msg, log_id, pical,
-	           org_name, id2user, alloc, get_propids);
+	auto err = oxcical_export_internal(nullptr, nullptr, nullptr, msg,
+	           log_id, pical, org_name, id2user, alloc, get_propids);
 	if (err.size() > 0) {
 		mlog(LV_ERR, "%s", err.c_str());
 		return false;
